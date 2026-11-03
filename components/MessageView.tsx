@@ -164,7 +164,8 @@ interface Props {
   forkEntryId?: string;
   /** Forking puts the branched prompt back into the composer (edit-and-resend). */
   forkEditsPrompt?: boolean;
-  onFork?: (entryId: string, editPrompt: boolean) => void;
+  forkIsLeaf?: boolean;
+  onFork?: (entryId?: string, editPrompt?: boolean) => void;
   forking?: boolean;
   forkDisabled?: boolean;
   onEdit?: (entryId: string, content: string) => Promise<boolean>;
@@ -211,12 +212,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, forkEntryId, forkEditsPrompt, onFork, forking, forkDisabled, onEdit, editing, editDisabled, showTimestamp, prevTimestamp, sessionId, toolCallsDefaultCollapsed = true, expandThinkingByDefault = false, hideThinking = false, sourceBlockIndices, liveTokensPerSecond }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, forkEntryId, forkEditsPrompt, forkIsLeaf, onFork, forking, forkDisabled, onEdit, editing, editDisabled, showTimestamp, prevTimestamp, sessionId, toolCallsDefaultCollapsed = true, expandThinkingByDefault = false, hideThinking = false, sourceBlockIndices, liveTokensPerSecond }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} forkDisabled={forkDisabled} onEdit={onEdit} editing={editing} editDisabled={editDisabled} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} forkEditsPrompt={forkEditsPrompt} forkIsLeaf={forkIsLeaf} onFork={onFork} forking={forking} forkDisabled={forkDisabled} onEdit={onEdit} editing={editing} editDisabled={editDisabled} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} forkEntryId={forkEntryId} forkEditsPrompt={forkEditsPrompt} onFork={onFork} forking={forking} forkDisabled={forkDisabled} toolCallsDefaultCollapsed={toolCallsDefaultCollapsed} expandThinkingByDefault={expandThinkingByDefault} hideThinking={hideThinking} sourceBlockIndices={sourceBlockIndices} liveTokensPerSecond={liveTokensPerSecond} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} forkEntryId={forkEntryId} forkEditsPrompt={forkEditsPrompt} forkIsLeaf={forkIsLeaf} onFork={onFork} forking={forking} forkDisabled={forkDisabled} toolCallsDefaultCollapsed={toolCallsDefaultCollapsed} expandThinkingByDefault={expandThinkingByDefault} hideThinking={hideThinking} sourceBlockIndices={sourceBlockIndices} liveTokensPerSecond={liveTokensPerSecond} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -249,6 +250,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.entryId === next.entryId
     && prev.forkEntryId === next.forkEntryId
     && prev.forkEditsPrompt === next.forkEditsPrompt
+    && prev.forkIsLeaf === next.forkIsLeaf
     && prev.onFork === next.onFork
     && prev.forking === next.forking
     && prev.forkDisabled === next.forkDisabled
@@ -286,10 +288,11 @@ function imageBlockSrc(img: ImageContent): string {
  * resolved by `resolveForkTargets` — for an assistant reply, the next user
  * prompt, so the reply stays in the fork's history.
  */
-function ForkSessionButton({ entryId, editPrompt, onFork, forking, forkDisabled }: {
-  entryId: string;
-  editPrompt: boolean;
-  onFork: (entryId: string, editPrompt: boolean) => void;
+function ForkSessionButton({ entryId, editPrompt = false, isLeaf = false, onFork, forking, forkDisabled }: {
+  entryId?: string;
+  editPrompt?: boolean;
+  isLeaf?: boolean;
+  onFork: (entryId?: string, editPrompt?: boolean) => void;
   forking?: boolean;
   forkDisabled?: boolean;
 }) {
@@ -299,20 +302,31 @@ function ForkSessionButton({ entryId, editPrompt, onFork, forking, forkDisabled 
   if (confirmingId !== null && confirmingId !== entryId) setConfirmingId(null);
   const confirming = confirmingId === entryId;
   const blocked = forkDisabled || forking;
+  const tooltipContent = forking
+    ? t("messageView.creatingSession")
+    : isLeaf
+      ? t("messageView.forkSession")
+      : t("messageView.branchFromHere");
   return (
     <>
     <ConfirmDialog
       open={confirming}
-      onOpenChange={(open) => { setConfirmingId(open ? entryId : null); }}
+      onOpenChange={(open) => { setConfirmingId(open ? (isLeaf ? "__LEAF__" : (entryId ?? null)) : null); }}
       title={t("messageView.forkConfirmTitle")}
-      description={t(editPrompt ? "messageView.forkConfirmEditBody" : "messageView.forkConfirmBody")}
+      description={t(!isLeaf && editPrompt ? "messageView.forkConfirmEditBody" : "messageView.forkConfirmBody")}
       confirmLabel={t("messageView.newSession")}
       cancelLabel={t("chatInput.cancel")}
-      onConfirm={() => { setConfirmingId(null); if (!blocked) onFork(entryId, editPrompt); }}
+      onConfirm={() => {
+        setConfirmingId(null);
+        if (!blocked) {
+          if (isLeaf) onFork(undefined, false);
+          else if (entryId) onFork(entryId, editPrompt);
+        }
+      }}
     />
-    <Tooltip content={forking ? t("messageView.creatingSession") : t("messageView.newSessionTitle")}>
+    <Tooltip content={tooltipContent}>
       <button
-        onClick={() => { setConfirmingId(entryId); }}
+        onClick={() => { setConfirmingId(isLeaf ? "__LEAF__" : (entryId ?? null)); }}
         disabled={blocked}
         aria-label={forking ? t("messageView.creatingSession") : t("messageView.newSessionTitle")}
         style={{
@@ -336,12 +350,14 @@ function ForkSessionButton({ entryId, editPrompt, onFork, forking, forkDisabled 
     </>
   );
 }
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, forkDisabled, onEdit, editing, editDisabled }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, forkEditsPrompt, forkIsLeaf, onFork, forking, forkDisabled, onEdit, editing, editDisabled }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   entryId?: string;
-  onFork?: (entryId: string, editPrompt: boolean) => void;
+  forkEditsPrompt?: boolean;
+  forkIsLeaf?: boolean;
+  onFork?: (entryId?: string, editPrompt?: boolean) => void;
   forking?: boolean;
   forkDisabled?: boolean;
   onEdit?: (entryId: string, content: string) => Promise<boolean>;
@@ -383,7 +399,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
   }, [content, imageBlocks.length]);
 
   const time = formatTime(message.timestamp, locale);
-  const canFork = !!entryId && !!onFork;
+  const canFork = (!!forkIsLeaf || !!entryId) && !!onFork;
   const canEdit = !!entryId && !!onEdit && !message.branchSummary;
   if (confirmingEditId !== null && (!canEdit || confirmingEditId !== entryId)) setConfirmingEditId(null);
   const confirmingEdit = canEdit && confirmingEditId === entryId;
@@ -503,7 +519,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
                 </button>
               </Tooltip>
               </>}
-              {canFork && <ForkSessionButton entryId={entryId!} editPrompt onFork={onFork!} forking={forking} forkDisabled={forkDisabled || editing || editDisabled} />}
+              {canFork && <ForkSessionButton entryId={entryId} editPrompt={forkEditsPrompt ?? true} isLeaf={forkIsLeaf} onFork={onFork!} forking={forking} forkDisabled={forkDisabled || editing || editDisabled} />}
             </div>
           )}
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{time}</span>}
@@ -540,6 +556,7 @@ function AssistantMessageView({
   entryId,
   forkEntryId,
   forkEditsPrompt = false,
+  forkIsLeaf = false,
   onFork,
   forking,
   forkDisabled,
@@ -562,7 +579,8 @@ function AssistantMessageView({
   /** User entry omp's `branch` command accepts for this reply (see lib/chat-fork.ts). */
   forkEntryId?: string;
   forkEditsPrompt?: boolean;
-  onFork?: (entryId: string, editPrompt: boolean) => void;
+  forkIsLeaf?: boolean;
+  onFork?: (entryId?: string, editPrompt?: boolean) => void;
   forking?: boolean;
   forkDisabled?: boolean;
   toolCallsDefaultCollapsed: boolean;
@@ -584,7 +602,7 @@ function AssistantMessageView({
   const time = showTimestamp ? formatTime(message.timestamp, locale) : null;
   const bodyRef = useRef<HTMLDivElement>(null);
   const texts = (message.content ?? []).filter((block): block is TextContent => block.type === "text").map((block) => block.text);
-  const canFork = !!forkEntryId && !!onFork;
+  const canFork = (!!forkEntryId || !!forkIsLeaf) && !!onFork;
   const blockItems = (message.content ?? [])
     .map((block, index) => ({ block, originalIndex: sourceBlockIndices?.[index] ?? index }))
     .filter(({ block }) => !(hideThinking && block.type === "thinking") && !isEmptyThinkingBlock(block, { isStreaming }));
@@ -811,7 +829,7 @@ function AssistantMessageView({
                 </button>
               </Tooltip>
             )}
-            {canFork && <ForkSessionButton entryId={forkEntryId!} editPrompt={forkEditsPrompt} onFork={onFork!} forking={forking} forkDisabled={forkDisabled} />}
+            {canFork && <ForkSessionButton entryId={forkEntryId} editPrompt={forkEditsPrompt} isLeaf={forkIsLeaf} onFork={onFork!} forking={forking} forkDisabled={forkDisabled} />}
           </div>
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>}
         </div>
